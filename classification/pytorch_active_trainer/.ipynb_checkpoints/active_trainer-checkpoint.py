@@ -8,11 +8,11 @@ from itertools import product
 import torch
 import pandas as pd
 from clearml import Task
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from utils import save_model
+from tensorboard_pytorch import TensorboardPyTorch
 from hooks import Hooks
+from utils import save_model
 
 
 class Trainer:
@@ -57,18 +57,18 @@ class Trainer:
         self.base_path = os.path.join(os.getcwd(), f'data/{exp_name}/'
                                               f'_{datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}')
         os.makedirs(self.base_path)
+        os.makedirs(f'{self.base_path}/checkpoints')
         df_runs = pd.DataFrame()
         for run, params_run in enumerate(iter_params):
             self.init_run(params_run)
             params_pooled = self.params_adjust(copy.deepcopy(params_run))
             self.date = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            os.makedirs(f'{self.base_path}/checkpoints')
             if self.params_clearml:
                 task = Task.init(project_name=f'{exp_name}', task_name=f'run_{exp_name}_{run}')
             if self.is_tensorboard :
-                self.writer = SummaryWriter(f'{self.base_path}/tensorboard/{self.date}')
-                inp = next(iter(self.loaders['train']))[0]
-                self.writer.add_graph(self.model, inp.to(self.device))
+                self.writer = TensorboardPyTorch(f'{self.base_path}/tensorboard/{self.date}', self.device)
+                # inp = next(iter(self.loaders['train']))[0]
+                # self.writer.log_graph(self.model, inp.to(self.device))
 
             self.loop(0, epochs)
 
@@ -114,7 +114,6 @@ class Trainer:
         if self.scheduler_:
             self.scheduler = self.scheduler_(self.optim, **params['scheduler'])
         self.loaders = self.loaders_(**params['loaders'])
-        hooks = Hooks(self.model, self.writer)
 
 
     def params_adjust(self, params):
@@ -136,14 +135,17 @@ class Trainer:
 
             running_acc += (torch.argmax(y_pred.data, dim=1) == y_true).sum().item()
             running_loss += loss.item() * x_true.size(0)
+            self.writer.update_tensors('y_pred', y_pred)
+            self.writer.update_tensors('y_true', y_true)
 
         epoch_acc = running_acc / len(self.loaders[phase].dataset)
         epoch_loss = running_loss / len(self.loaders[phase].dataset)
 
         self.logs[f'{phase}_accuracy'] = round(epoch_acc, 4)
         self.logs[f'{phase}_log_loss'] = round(epoch_loss, 4)
-        self.writer.add_scalar(f'Acc/{phase}', self.logs[f'{phase}_accuracy'], epoch + 1)
-        self.writer.add_scalar(f'Loss/{phase}', self.logs[f'{phase}_log_loss'], epoch + 1)
+        self.writer.log_scalar(f'Acc/{phase}', self.logs[f'{phase}_accuracy'], epoch + 1)
+        self.writer.log_scalar(f'Loss/{phase}', self.logs[f'{phase}_log_loss'], epoch + 1)
+        # self.writer.log_at_epoch_end_val()
         if self.verbose:
             print(self.logs)
 
